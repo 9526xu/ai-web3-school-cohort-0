@@ -28,11 +28,21 @@ This repo is designed to be public proof-of-work. Do not commit API keys, wallet
 
 ## GitHub Setup
 
-Recommended remote repo defaults:
+Current remote repo:
+
+- URL: https://github.com/9526xu/ai-web3-school-cohort-0
+- Local path: `/Users/xurujian/Documents/github/ai-web3-school-cohort-0`
+- Visibility: public
+
+Initial setup checklist:
+
+- `initialization-checklist.md`
+
+Original recommended defaults:
 
 - Repo name: `ai-web3-school-cohort-0`
 - Visibility: public
-- Local path: `~/ai-web3-school-cohort-0`
+- Local path: `/Users/xurujian/Documents/github/ai-web3-school-cohort-0`
 - Description: `Personal learning journal and proof-of-work for AI x Web3 School.`
 
 Before creating the GitHub repo, confirm the name, visibility, and local path. With GitHub CLI:
@@ -42,4 +52,3 @@ gh auth login
 gh auth status
 gh repo create ai-web3-school-cohort-0 --public --description "Personal learning journal and proof-of-work for AI x Web3 School" --clone
 ```
-

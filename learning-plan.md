@@ -9,7 +9,15 @@ This plan follows the Handbook map: AI foundation, Web3 foundation, AI x Web3 br
 - Maintain daily proof-of-work in `daily/`.
 - Turn each learning task into one concrete artifact: notes, experiment, feedback, or submission record.
 - Keep at least one Handbook feedback item whenever a page is unclear, outdated, or missing a practical example.
-- By the hackathon phase, converge on one small demo with a repo, README, design note, and submission record.
+- Maintain a Chinese-first bilingual glossary in `glossary.md`.
+- By the hackathon phase, converge on one small payment, trading, or Agentic Commerce demo with a repo, README, design note, and submission record.
+
+## Personal Focus
+
+- Primary direction: development and product research.
+- Domain focus: payment, trading, and Agentic Commerce.
+- Time budget: about 1 hour each evening.
+- Output style: Chinese first, with key English terms preserved for reading and communication practice.
 
 ## Week 1: Shared Language
 
@@ -50,7 +58,7 @@ Challenge path:
 Minimum path:
 
 - Read Chain-aware Context, Web3 Tool Use, Agent Workflow, Agent Wallet, and AI Security.
-- Map one end-to-end workflow: user request -> context retrieval -> tool call -> human confirmation -> transaction/log.
+- Map one end-to-end workflow: user request -> context retrieval -> tool call -> human confirmation -> payment/trade preview -> transaction/log.
 
 Recommended path:
 
@@ -59,13 +67,13 @@ Recommended path:
 
 Challenge path:
 
-- Build a minimal demo or simulation for tool calling, transaction preview, or permission checks.
+- Build a minimal demo or simulation for tool calling, payment/trade preview, or permission checks.
 
 ## Week 4: Hackathon Direction
 
 Minimum path:
 
-- Choose one track: Agentic Commerce / Payment, Dev Tooling, AI Security / Privacy, AI x Governance / Coordination, or Open Track.
+- Choose one track: Agentic Commerce / Payment, trading assistant, transaction safety, or Open Track.
 - Write `hackathon/project-brief.md`.
 
 Recommended path:
@@ -91,4 +99,3 @@ Evening:
 - Draft check-in text.
 - Manually submit to WCB/check-in platform.
 - Save submission link or screenshot note in the daily file.
-
