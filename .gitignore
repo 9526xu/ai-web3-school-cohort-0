@@ -1,0 +1,10 @@
+.env
+.env.*
+*.pem
+*.key
+*.seed
+secrets/
+private/
+node_modules/
+.DS_Store
+
