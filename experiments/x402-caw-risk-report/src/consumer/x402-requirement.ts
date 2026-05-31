@@ -1,5 +1,6 @@
 import { x402Client, x402HTTPClient } from "@x402/core/client";
-import type { PaymentRequired } from "@x402/core/types";
+import type { PaymentRequired, SettleResponse } from "@x402/core/types";
+import { appendPaymentIdentifierToExtensions } from "@x402/extensions/payment-identifier";
 import { normalizeRiskReportResource } from "../shared/payment.js";
 import type { PaymentRequirementSummary } from "../shared/types.js";
 
@@ -23,6 +24,22 @@ export function summarizePaymentRequirement(paymentRequired: PaymentRequired): P
     resource: normalizeRiskReportResource(paymentRequired.resource.url),
     expiresAt: stringExtra(accepted.extra, "expiresAt")
   };
+}
+
+export function paymentRequiredWithPaymentId(paymentRequired: PaymentRequired, paymentId: string): PaymentRequired {
+  return {
+    ...paymentRequired,
+    extensions: appendPaymentIdentifierToExtensions({ ...(paymentRequired.extensions ?? {}) }, paymentId)
+  };
+}
+
+export function parsePaymentSettleResponse(response: Response): SettleResponse | undefined {
+  try {
+    const client = new x402HTTPClient(new x402Client());
+    return client.getPaymentSettleResponse((name) => response.headers.get(name));
+  } catch {
+    return undefined;
+  }
 }
 
 function stringExtra(extra: Record<string, unknown> | undefined, key: string): string | undefined {
