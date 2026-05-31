@@ -198,15 +198,14 @@ x402 middleware 负责 payment verification 和 settlement，但服务端仍然�
 
 服务端状态应围绕订单建模，而不是只保存几张流水表。
 
-本 MVP 的业务订单是一次 `risk_report_order`：用户为某个链上地址购买一份风险报告。payment attempt、payment receipt 和 report delivery 都应该挂在这个订单下面。
+本 MVP 的业务订单是一次 `risk_report_order`：用户为某个链上地址购买一份风险报告。payment record 和 report delivery 都应该挂在这个订单下面。
 
-建议 MVP 至少保存四类记录：
+建议 MVP 保存三类记录：
 
 | 记录 | 作用 |
 | --- | --- |
 | `risk_report_orders` | 业务主表，表示一次风险报告购买订单。 |
-| `payment_attempts` | 订单下的一次付款尝试，记录 x402 payment requirement。 |
-| `payment_receipts` | 订单下的付款成功记录，记录 settlement 结果。 |
+| `payment_records` | 订单下的支付记录，覆盖付款要求、签名提交、验证和结算结果。 |
 | `report_deliveries` | 订单下的交付记录，记录返回给用户的报告。 |
 
 MVP 采用本地持久化的轻量存储，不接远程数据库。
@@ -242,34 +241,28 @@ MVP 采用本地持久化的轻量存储，不接远程数据库。
 | `delivered_at` | 报告交付时间。 |
 | `expires_at` | 订单或缓存过期时间。 |
 
-`payment_attempts`：
+`payment_records`：
 
 | 字段 | 含义 |
 | --- | --- |
-| `id` | 服务端生成的 attempt id。 |
+| `id` | 支付记录 id，例如 `payrec_...`。 |
 | `order_id` | 对应 `risk_report_orders.id`。 |
-| `resource` | `/risk-report`。 |
-| `request_address` | 用户查询的地址。 |
+| `payment_id` | 幂等 payment id。 |
+| `request_fingerprint` | 与订单一致的请求指纹。 |
+| `status` | `required`、`signature_received`、`verified`、`settled`、`failed`。 |
 | `price` | 报价。 |
 | `network` | network identifier。 |
 | `token` | token。 |
 | `pay_to` | 服务端收款地址。 |
-| `payment_id` | x402 payment-identifier extension 中的 payment id，如果客户端提供。 |
-| `request_fingerprint` | method、path、address、price、network、token、payTo 的 hash。 |
-| `status` | `payment_required`、`settled`、`delivered`、`failed`。 |
-| `created_at` | 创建时间。 |
-
-`payment_receipts`：
-
-| 字段 | 含义 |
-| --- | --- |
-| `id` | receipt id。 |
-| `order_id` | 对应 `risk_report_orders.id`。 |
-| `attempt_id` | 对应 `payment_attempts.id`。 |
-| `payment_id` | 幂等 payment id。 |
 | `payer` | 付款方地址，若 settlement response 提供。 |
 | `tx_hash` | 链上交易 hash，若 settlement response 提供。 |
+| `payment_required_payload` | 服务端返回的 x402 payment requirement 摘要。 |
+| `payment_signature_payload` | 客户端提交的 payment payload 摘要。 |
+| `verification_response` | x402 verification response 摘要。 |
 | `settlement_response` | x402 settlement response 原文或摘要。 |
+| `failure_reason` | 支付失败原因。 |
+| `created_at` | 创建时间。 |
+| `updated_at` | 更新时间。 |
 | `settled_at` | 结算成功时间。 |
 
 `report_deliveries`：
@@ -303,8 +296,8 @@ paid -> delivery_failed
 设计原则：
 
 - `risk_report_orders` 是查询和重试的入口。
-- `payment_attempts`、`payment_receipts`、`report_deliveries` 是订单的事实记录。
-- 同一个订单可以有多次 payment attempt，但 MVP 只允许一次 successful receipt。
+- `payment_records`、`report_deliveries` 是订单的事实记录。
+- 同一个订单可以有多条 payment record，但 MVP 只允许一条 `settled` payment record。
 - 重试时优先根据 `payment_id + request_fingerprint` 找订单，再决定返回缓存、继续交付或报错。
 
 #### 5.3.3 服务端付款处理流程与安全边界
@@ -316,7 +309,7 @@ paid -> delivery_failed
 - Client / Agent 只能提交签名后的 payment payload。
 - Resource Server 负责验证 payment payload 是否满足自己声明的 payment requirement。
 - 如果使用 facilitator，Resource Server 会把 payment payload 和 payment details 发给 facilitator 的 `/verify` 和 `/settle` 能力完成验证与结算。
-- 只有服务端自己收到验证 / 结算成功结果后，才能写入 `payment_receipts`。
+- 只有服务端自己收到验证 / 结算成功结果后，才能把 `payment_records.status` 更新为 `settled`。
 - 不提供任何“外部可直接更新付款状态”的公开接口。
 
 因此，数据库里的支付成功记录只能由服务端内部流程写入，例如 x402 middleware / ResourceServer 的 `onAfterSettle` hook，不能由客户端请求直接写入。
@@ -331,7 +324,7 @@ sequenceDiagram
 
     Client->>MW: GET /risk-report?address=0xabc...
     MW->>DB: 创建或查询 risk_report_order
-    MW->>DB: 记录 payment_attempt
+    MW->>DB: 创建 payment_record(status=required)
     MW-->>Client: 402 Payment Required + PAYMENT-REQUIRED
 
     Client->>MW: 重试请求 + PAYMENT-SIGNATURE
@@ -340,11 +333,13 @@ sequenceDiagram
         DB-->>MW: 返回订单下已保存的 delivery
         MW-->>Client: 200 cached risk report
     else 订单未付款或未交付
+        MW->>DB: 更新 payment_record(status=signature_received)
         MW->>Facilitator: verify payment payload
         Facilitator-->>MW: verification response
+        MW->>DB: 更新 payment_record(status=verified)
         MW->>Facilitator: settle payment
         Facilitator-->>MW: settlement response
-        MW->>DB: 内部 hook 保存 payment_receipt，并更新订单为 paid
+        MW->>DB: 内部 hook 更新 payment_record(status=settled)，并更新订单为 paid
         MW->>Handler: 放行业务请求
         Handler->>Handler: 生成 risk report
         Handler->>DB: 保存 report_delivery，并更新订单为 delivered
@@ -356,11 +351,11 @@ sequenceDiagram
 
 1. 用户付完款以后，服务端怎么拿到付款请求结果？
    - x402 middleware / ResourceServer 在验证和结算阶段会拿到 settlement response。
-   - 服务端应通过 `onAfterSettle` 这类 lifecycle hook 记录 settlement response、payer、tx hash、payment id 等信息。
+   - 服务端应通过 `onAfterSettle` 这类 lifecycle hook 更新 payment record，记录 settlement response、payer、tx hash、payment id 等信息。
    - 业务 handler 在 middleware 放行后执行，生成并保存本次报告交付记录。
 
 2. 服务端是否需要保存记录？
-   - 需要。至少保存 payment receipt 和 report delivery。
+   - 需要。至少保存 payment record 和 report delivery。
    - 原因是链上记录只能证明 settlement，不能证明服务端交付了哪份报告，也不能处理 HTTP 响应丢失后的重试。
 
 #### 5.3.4 与传统支付回调的区别
@@ -399,7 +394,7 @@ Client 请求资源
 #### 5.3.5 本 MVP 的服务端安全约束
 
 - 不提供 `/payments/update`、`/settlement/callback` 这类可由外部直接更新支付状态的接口。
-- `payment_receipts` 只能由 x402 verification / settlement 成功后的内部 hook 写入。
+- `payment_records` 的 `verified` / `settled` 状态只能由 x402 verification / settlement 成功后的内部 hook 或内部流程写入。
 - `report_deliveries` 只能在业务 handler 生成报告后写入，并关联到订单。
 - 所有重试命中缓存前，都必须先找到 `payment_id` 和 `request_fingerprint` 一致的订单。
 - 如果同一个 `payment_id` 请求了不同地址、价格、network、token 或 payTo，返回 `409 Conflict`。
