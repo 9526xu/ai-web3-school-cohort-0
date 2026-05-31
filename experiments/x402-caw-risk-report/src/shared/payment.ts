@@ -11,3 +11,14 @@ export function paymentRequirementFromConfig(config: DemoConfig): PaymentRequire
     resource: "/risk-report"
   };
 }
+
+export function normalizeRiskReportResource(resourceUrl: string): "/risk-report" {
+  const path = resourceUrl.startsWith("http")
+    ? new URL(resourceUrl).pathname
+    : resourceUrl.split("?")[0];
+
+  if (path !== "/risk-report") {
+    throw new Error(`Unsupported payment resource: ${resourceUrl}`);
+  }
+  return "/risk-report";
+}

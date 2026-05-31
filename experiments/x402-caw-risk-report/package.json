@@ -12,6 +12,11 @@
   },
   "dependencies": {
     "@hono/node-server": "^1.14.1",
+    "@types/better-sqlite3": "^7.6.13",
+    "@x402/core": "^2.14.0",
+    "@x402/evm": "^2.14.0",
+    "@x402/hono": "^2.14.0",
+    "better-sqlite3": "^12.10.0",
     "hono": "^4.7.11"
   },
   "devDependencies": {

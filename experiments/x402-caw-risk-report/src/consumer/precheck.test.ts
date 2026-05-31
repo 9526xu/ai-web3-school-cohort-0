@@ -18,11 +18,12 @@ describe("precheckPaymentRequirement", () => {
         maxPriceUsdc: "0.005",
         expectedPayTo: baseRequirement.payTo,
         expectedNetwork: baseRequirement.network,
-        expectedTokenSymbol: baseRequirement.tokenSymbol
+        expectedTokenSymbol: baseRequirement.tokenSymbol,
+        now: new Date("2026-05-31T00:00:00.000Z")
       })
     ).toEqual({
       status: "passed",
-      checks: ["price", "payee", "network", "token", "resource"]
+      checks: ["price", "payee", "network", "token", "resource", "expiry"]
     });
   });
 
@@ -33,12 +34,71 @@ describe("precheckPaymentRequirement", () => {
         maxPriceUsdc: "0.005",
         expectedPayTo: baseRequirement.payTo,
         expectedNetwork: baseRequirement.network,
-        expectedTokenSymbol: baseRequirement.tokenSymbol
+        expectedTokenSymbol: baseRequirement.tokenSymbol,
+        now: new Date("2026-05-31T00:00:00.000Z")
       })
     ).toEqual({
       status: "failed",
       checks: [],
       reason: "payment requirement exceeds max price"
+    });
+  });
+
+  it("fails before payment when the payee does not match policy", () => {
+    expect(
+      precheckPaymentRequirement({
+        requirement: { ...baseRequirement, payTo: "0x0000000000000000000000000000000000000002" },
+        maxPriceUsdc: "0.005",
+        expectedPayTo: baseRequirement.payTo,
+        expectedNetwork: baseRequirement.network,
+        expectedTokenSymbol: baseRequirement.tokenSymbol,
+        now: new Date("2026-05-31T00:00:00.000Z")
+      })
+    ).toEqual({
+      status: "failed",
+      checks: ["price"],
+      reason: "payee mismatch"
+    });
+  });
+
+  it("fails before payment when token or network does not match policy", () => {
+    expect(
+      precheckPaymentRequirement({
+        requirement: { ...baseRequirement, network: "eip155:1" },
+        maxPriceUsdc: "0.005",
+        expectedPayTo: baseRequirement.payTo,
+        expectedNetwork: baseRequirement.network,
+        expectedTokenSymbol: baseRequirement.tokenSymbol,
+        now: new Date("2026-05-31T00:00:00.000Z")
+      })
+    ).toMatchObject({ status: "failed", reason: "network mismatch" });
+
+    expect(
+      precheckPaymentRequirement({
+        requirement: { ...baseRequirement, tokenSymbol: "DAI" },
+        maxPriceUsdc: "0.005",
+        expectedPayTo: baseRequirement.payTo,
+        expectedNetwork: baseRequirement.network,
+        expectedTokenSymbol: baseRequirement.tokenSymbol,
+        now: new Date("2026-05-31T00:00:00.000Z")
+      })
+    ).toMatchObject({ status: "failed", reason: "token mismatch" });
+  });
+
+  it("fails before payment when the payment requirement is expired", () => {
+    expect(
+      precheckPaymentRequirement({
+        requirement: { ...baseRequirement, expiresAt: "2026-05-30T23:59:59.000Z" },
+        maxPriceUsdc: "0.005",
+        expectedPayTo: baseRequirement.payTo,
+        expectedNetwork: baseRequirement.network,
+        expectedTokenSymbol: baseRequirement.tokenSymbol,
+        now: new Date("2026-05-31T00:00:00.000Z")
+      })
+    ).toEqual({
+      status: "failed",
+      checks: ["price", "payee", "network", "token", "resource"],
+      reason: "payment requirement expired"
     });
   });
 });
