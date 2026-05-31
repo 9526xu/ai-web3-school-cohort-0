@@ -16,6 +16,7 @@ export type PaymentRequirementSummary = {
   tokenSymbol: string;
   payTo: string;
   resource: "/risk-report";
+  expiresAt?: string;
 };
 
 export type PrecheckResult =
@@ -28,6 +29,10 @@ export type AuditRecord = {
   api: string;
   paymentRequirement?: PaymentRequirementSummary;
   precheck?: PrecheckResult;
+  payment?: {
+    status: "not_attempted";
+    reason: string;
+  };
   report?: {
     hash: string;
     riskLevel: RiskLevel;

@@ -33,13 +33,37 @@ npm run check
 npm run provider
 ```
 
-In another terminal:
+Verify the unpaid Provider quote path:
 
 ```bash
-npm run consumer -- --address 0x0000000000000000000000000000000000000001
+curl -i \
+  -H 'Accept: application/json' \
+  'http://localhost:4021/risk-report?address=0x0000000000000000000000000000000000000001'
 ```
 
-The current scaffold proves the runtime shape. x402 seller middleware, SQLite records, and real CAW pact/payment calls are intentionally left for the next implementation issues.
+Expected result for a valid unpaid request:
+
+- HTTP `402 Payment Required`
+- `PAYMENT-REQUIRED` response header from the x402 middleware
+- JSON body explaining that payment is required
+- a local SQLite database under `data/`
+- no risk report body before payment
+
+The Consumer CLI can parse this `402` response and stop after local policy precheck:
+
+```bash
+npm run consumer -- \
+  --address 0x0000000000000000000000000000000000000001 \
+  --api http://localhost:4021/risk-report \
+  --max-price-usdc 0.005 \
+  --expected-payee 0x0000000000000000000000000000000000000000 \
+  --expected-token USDC \
+  --expected-network eip155:84532
+```
+
+If the payment requirement is out of policy, the CLI writes a failure audit record and does not create a CAW Pact, submit a payment, or retry as paid.
+
+The current Provider path quotes unpaid requests and persists the initial local order/payment record. Paid settlement, idempotent paid retry, and real CAW pact/payment calls are intentionally left for later implementation issues.
 
 ## Git Safety
 

@@ -1,85 +1,33 @@
 import { loadConfig } from "../shared/config.js";
-import { createTaskId } from "../shared/ids.js";
-import { reportHash } from "../shared/fingerprint.js";
-import { normalizeEvmAddress } from "../shared/address.js";
-import { paymentRequirementFromConfig } from "../shared/payment.js";
-import type { RiskReport } from "../shared/types.js";
-import { buildRiskReportPactSpec } from "./caw.js";
-import { precheckPaymentRequirement } from "./precheck.js";
-import { validateReport } from "./validate-report.js";
-import { writeAuditRecord } from "./audit.js";
+import { runConsumerPrecheckTask } from "./task.js";
 
 type CliArgs = {
   address: string;
+  apiUrl?: string;
   maxPriceUsdc: string;
+  expectedPayTo?: string;
+  expectedNetwork?: string;
+  expectedTokenSymbol?: string;
+  expectedResource: "/risk-report";
 };
 
 async function main(): Promise<void> {
   const config = loadConfig();
   const args = parseArgs(process.argv.slice(2));
-  const address = normalizeEvmAddress(args.address);
-  const taskId = createTaskId();
-  const requirement = paymentRequirementFromConfig(config);
-  const precheck = precheckPaymentRequirement({
-    requirement,
+  const result = await runConsumerPrecheckTask({
+    address: args.address,
+    apiUrl: args.apiUrl,
     maxPriceUsdc: args.maxPriceUsdc,
-    expectedPayTo: config.providerPayToAddress,
-    expectedNetwork: config.x402Network,
-    expectedTokenSymbol: config.x402TokenSymbol
+    expectedPayTo: args.expectedPayTo ?? config.providerPayToAddress,
+    expectedNetwork: args.expectedNetwork ?? config.x402Network,
+    expectedTokenSymbol: args.expectedTokenSymbol ?? config.x402TokenSymbol,
+    expectedResource: args.expectedResource
   });
 
-  const pactSpec = buildRiskReportPactSpec({
-    address,
-    maxPriceUsdc: args.maxPriceUsdc,
-    network: config.x402Network,
-    tokenSymbol: config.x402TokenSymbol,
-    payTo: config.providerPayToAddress
-  });
-
-  const report = await fetchRiskReport(`${config.providerBaseUrl}/risk-report`, address);
-  const validation = validateReport(report, address);
-  const auditPath = await writeAuditRecord(config.auditDir, {
-    taskId,
-    requestedAddress: address,
-    api: `${config.providerBaseUrl}/risk-report`,
-    paymentRequirement: requirement,
-    precheck,
-    report: {
-      hash: reportHash(report),
-      riskLevel: report.riskLevel,
-      generatedAt: report.generatedAt
-    },
-    validation
-  });
-
-  console.log(
-    JSON.stringify(
-      {
-        taskId,
-        address,
-        scaffold: true,
-        cawPactSpecPrepared: pactSpec.policies.length > 0,
-        precheck,
-        validation,
-        auditPath
-      },
-      null,
-      2
-    )
-  );
-}
-
-async function fetchRiskReport(apiBase: string, address: string): Promise<RiskReport> {
-  const response = await fetch(`${apiBase}?address=${encodeURIComponent(address)}`);
-  if (!response.ok) {
-    throw new Error(`Provider request failed: ${response.status} ${response.statusText}`);
+  console.log(JSON.stringify(result, null, 2));
+  if (result.precheck.status === "failed") {
+    process.exitCode = 2;
   }
-
-  const body = (await response.json()) as { report?: RiskReport };
-  if (!body.report) {
-    throw new Error("Provider response did not include report");
-  }
-  return body.report;
 }
 
 function parseArgs(args: string[]): CliArgs {
@@ -89,7 +37,12 @@ function parseArgs(args: string[]): CliArgs {
   }
   return {
     address,
-    maxPriceUsdc: readOption(args, "--max-price-usdc") ?? "0.005"
+    apiUrl: readOption(args, "--api"),
+    maxPriceUsdc: readOption(args, "--max-price-usdc") ?? "0.005",
+    expectedPayTo: readOption(args, "--expected-payee"),
+    expectedNetwork: readOption(args, "--expected-network"),
+    expectedTokenSymbol: readOption(args, "--expected-token"),
+    expectedResource: "/risk-report"
   };
 }
 
