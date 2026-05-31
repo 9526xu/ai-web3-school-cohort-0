@@ -4,6 +4,8 @@ Status: confirmed on 2026-05-18.
 
 ## Current Profile
 
+- Public GitHub name: AndyXu.
+- WCB student metadata: stored locally in `.env` and not committed to this public repo.
 - AI foundation: not a beginner; familiar with practical agent tools and workflows such as Flowise.
 - AI development: has some hands-on foundation.
 - Web3 foundation: has basic Web3 knowledge and previous Solidity learning experience.
