@@ -1,0 +1,23 @@
+{
+  "name": "x402-caw-risk-report",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev:provider": "tsx watch src/provider/server.ts",
+    "provider": "tsx src/provider/server.ts",
+    "consumer": "tsx src/consumer/cli.ts",
+    "check": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@hono/node-server": "^1.14.1",
+    "hono": "^4.7.11"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.29",
+    "tsx": "^4.19.4",
+    "typescript": "^5.8.3",
+    "vitest": "^3.2.1"
+  }
+}

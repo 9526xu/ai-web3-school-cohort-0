@@ -12,6 +12,19 @@
 
 本方案不使用 LangGraph。当前流程是确定性的支付和验收流程，不需要 agent workflow graph、planner、多工具编排或长期记忆。使用 LangGraph 会让学习重点从 Payment / Commerce / Settlement 偏移到 agent framework。
 
+### 1.1 实现技术栈与 demo 落点
+
+首个可运行 demo 放在 `experiments/x402-caw-risk-report/`，与 `hackathon/` 设计文档和 `tasks/` 课程记录分离。
+
+第一版实现采用 TypeScript + Hono + Node.js：
+
+- Provider Server 使用 Hono 暴露 `/health` 和后续受 x402 保护的 `/risk-report`。
+- Reference Consumer CLI 使用 TypeScript 编写，后续负责请求、解析 402、前置校验、CAW 付款、重试和审计输出。
+- 共享逻辑放在 `src/shared/`，便于未来 Next.js UI 复用配置、类型、payment requirement、地址校验、fingerprint 和验收逻辑。
+- 本地运行输出限定在 `data/` 和 `audits/`，SQLite 文件、审计 JSON、CAW credential、pact-scoped API key、钱包私钥、seed phrase 和真实私有账户标识都不进入 git。
+
+本 slice 不引入 Next.js，因为当前 MVP 还没有浏览器 UI；未来只有在需要 dashboard 或用户交互页面时再加入。
+
 ## 2. 系统边界
 
 | 模块 | 是否实现 | 形态 | 责任 |
