@@ -7,6 +7,9 @@ export type DemoConfig = {
   x402Network: string;
   x402PriceUsdc: string;
   x402TokenSymbol: string;
+  x402TokenVersion: string;
+  x402TokenDecimals: number;
+  x402AssetAddress?: string;
   x402FacilitatorUrl: string;
   cawApiBaseUrl: string;
   cawWalletId: string;
@@ -23,6 +26,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): DemoConfig {
     x402Network: env.X402_NETWORK ?? "eip155:84532",
     x402PriceUsdc: env.X402_PRICE_USDC ?? "0.005",
     x402TokenSymbol: env.X402_TOKEN_SYMBOL ?? "USDC",
+    x402TokenVersion: env.X402_TOKEN_VERSION ?? "2",
+    x402TokenDecimals: parseTokenDecimals(env.X402_TOKEN_DECIMALS),
+    x402AssetAddress: env.X402_ASSET_ADDRESS,
     x402FacilitatorUrl: env.X402_FACILITATOR_URL ?? "https://x402.org/facilitator",
     cawApiBaseUrl: env.CAW_API_BASE_URL ?? "https://api.example.invalid",
     cawWalletId: env.CAW_WALLET_ID ?? "replace-with-wallet-id",
@@ -30,6 +36,14 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): DemoConfig {
     sqlitePath: path.resolve(env.SQLITE_PATH ?? "./data/risk-report-demo.sqlite"),
     auditDir: path.resolve(env.AUDIT_DIR ?? "./audits")
   };
+}
+
+function parseTokenDecimals(value: string | undefined): number {
+  const decimals = Number(value ?? "6");
+  if (!Number.isInteger(decimals) || decimals < 0 || decimals > 36) {
+    throw new Error(`Invalid X402_TOKEN_DECIMALS: ${value}`);
+  }
+  return decimals;
 }
 
 function parsePort(value: string | undefined): number {

@@ -18,7 +18,7 @@ export function precheckPaymentRequirement(input: {
   }
   checks.push("price");
 
-  if (input.requirement.payTo.toLowerCase() !== input.expectedPayTo.toLowerCase()) {
+  if (!samePayee(input.requirement.payTo, input.expectedPayTo)) {
     return { status: "failed", checks, reason: "payee mismatch" };
   }
   checks.push("payee");
@@ -44,4 +44,16 @@ export function precheckPaymentRequirement(input: {
   checks.push("expiry");
 
   return { status: "passed", checks };
+}
+
+function samePayee(actual: string, expected: string): boolean {
+  if (isEvmAddress(actual) && isEvmAddress(expected)) {
+    return actual.toLowerCase() === expected.toLowerCase();
+  }
+
+  return actual === expected;
+}
+
+function isEvmAddress(value: string): boolean {
+  return /^0x[a-fA-F0-9]{40}$/.test(value);
 }

@@ -10,9 +10,12 @@ import {
   PAYMENT_IDENTIFIER
 } from "@x402/extensions/payment-identifier";
 import { paymentMiddleware, x402ResourceServer } from "@x402/hono";
+import { ExactSvmScheme } from "@x402/svm/exact/server";
 import type { MiddlewareHandler } from "hono";
 import type { DemoConfig } from "../shared/config.js";
+import { requestFingerprint } from "../shared/fingerprint.js";
 import { paymentRequirementFromConfig } from "../shared/payment.js";
+import { normalizeEvmAddress } from "./schema.js";
 import type { ProviderStore } from "./store.js";
 
 export function describeX402Boundary(): string {
@@ -26,7 +29,7 @@ export function createRiskReportPaymentRoutes(config: DemoConfig): RoutesConfig 
       accepts: [
         {
           scheme: payment.scheme,
-          price: `$${payment.priceUsdc}`,
+          price: paymentPrice(config),
           network: payment.network as Network,
           payTo: payment.payTo,
           maxTimeoutSeconds: 1800,
@@ -53,6 +56,33 @@ export function createRiskReportPaymentRoutes(config: DemoConfig): RoutesConfig 
   };
 }
 
+function paymentPrice(config: DemoConfig): string | { asset: string; amount: string; extra: Record<string, string> } {
+  if (!config.x402AssetAddress) {
+    return `$${config.x402PriceUsdc}`;
+  }
+
+  return {
+    asset: config.x402AssetAddress,
+    amount: decimalToAtomicAmount(config.x402PriceUsdc, config.x402TokenDecimals),
+    extra: {
+      name: config.x402TokenSymbol,
+      version: config.x402TokenVersion,
+      priceUsdc: config.x402PriceUsdc,
+      tokenSymbol: config.x402TokenSymbol
+    }
+  };
+}
+
+function decimalToAtomicAmount(decimalAmount: string, decimals: number): string {
+  if (/[eE]/.test(decimalAmount) || !/^\d+(\.\d+)?$/.test(decimalAmount)) {
+    throw new Error(`Invalid X402_PRICE_USDC: ${decimalAmount}`);
+  }
+
+  const [whole, fraction = ""] = decimalAmount.split(".");
+  const atomic = `${whole}${fraction.padEnd(decimals, "0").slice(0, decimals)}`.replace(/^0+/, "");
+  return atomic || "0";
+}
+
 export function createX402PaymentMiddleware(
   config: DemoConfig,
   store: ProviderStore,
@@ -64,7 +94,7 @@ export function createX402PaymentMiddleware(
       url: config.x402FacilitatorUrl
     });
   const resourceServer = new x402ResourceServer(facilitatorClient)
-    .register(config.x402Network as Network, new ExactEvmScheme())
+    .register(config.x402Network as Network, createExactScheme(config.x402Network))
     .registerExtension(paymentIdentifierResourceServerExtension)
     .onAfterVerify(async (context) => {
       const paymentId = extractPaymentIdentifier(context.paymentPayload as PaymentPayload);
@@ -82,17 +112,28 @@ export function createX402PaymentMiddleware(
     })
     .onAfterSettle(async (context) => {
       const paymentId = extractPaymentIdentifier(context.paymentPayload as PaymentPayload);
-      if (!paymentId) return;
-
-      const order = store.getOrderByPaymentId(paymentId);
-      if (!order) return;
+      const order = paymentId ? store.getOrderByPaymentId(paymentId) : undefined;
+      const fallbackFingerprint = paymentId ? undefined : requestFingerprintFromTransportContext(config, context.transportContext);
+      const requestFingerprint = order?.requestFingerprint ?? fallbackFingerprint;
+      if (!requestFingerprint) return;
 
       const responseBody = responseBodyFromTransportContext(context.transportContext);
       if (!responseBody) return;
 
-      store.recordSettledDelivery({
-        paymentId,
-        requestFingerprint: order.requestFingerprint,
+      if (paymentId) {
+        store.recordSettledDelivery({
+          paymentId,
+          requestFingerprint,
+          settlementResponse: context.result,
+          txHash: context.result.transaction,
+          payer: context.result.payer,
+          responseBody
+        });
+        return;
+      }
+
+      store.recordSettledDeliveryByFingerprint({
+        requestFingerprint,
         settlementResponse: context.result,
         txHash: context.result.transaction,
         payer: context.result.payer,
@@ -107,6 +148,18 @@ export function createX402PaymentMiddleware(
     undefined,
     options.syncFacilitatorOnStart ?? true
   );
+}
+
+function createExactScheme(network: string): ExactEvmScheme | ExactSvmScheme {
+  if (network.startsWith("solana:")) {
+    return new ExactSvmScheme();
+  }
+
+  if (network.startsWith("eip155:")) {
+    return new ExactEvmScheme();
+  }
+
+  throw new Error(`Unsupported X402_NETWORK for exact scheme: ${network}`);
 }
 
 export function paymentPayloadFromHeader(header: string | undefined): PaymentPayload | undefined {
@@ -141,4 +194,39 @@ function responseBodyFromTransportContext(context: unknown): string | undefined 
     return responseBody;
   }
   return undefined;
+}
+
+function requestFingerprintFromTransportContext(config: DemoConfig, context: unknown): string | undefined {
+  const adapter = requestAdapterFromTransportContext(context);
+  const rawAddress = adapter?.getQueryParam?.("address");
+  const addressValue = Array.isArray(rawAddress) ? rawAddress[0] : rawAddress;
+  if (!addressValue) return undefined;
+
+  const address = normalizeEvmAddress(addressValue);
+  return requestFingerprint({
+    method: "GET",
+    path: "/risk-report",
+    address,
+    payment: paymentRequirementFromConfig(config)
+  });
+}
+
+function requestAdapterFromTransportContext(
+  context: unknown
+): { getQueryParam?: (name: string) => string | string[] | undefined } | undefined {
+  if (!context || typeof context !== "object" || !("request" in context)) {
+    return undefined;
+  }
+
+  const request = (context as { request?: unknown }).request;
+  if (!request || typeof request !== "object" || !("adapter" in request)) {
+    return undefined;
+  }
+
+  const adapter = (request as { adapter?: unknown }).adapter;
+  if (!adapter || typeof adapter !== "object") {
+    return undefined;
+  }
+
+  return adapter as { getQueryParam?: (name: string) => string | string[] | undefined };
 }

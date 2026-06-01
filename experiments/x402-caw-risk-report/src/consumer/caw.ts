@@ -22,6 +22,7 @@ export function buildRiskReportPactSpec(input: {
   resource?: "/risk-report";
 }): PactSpecDraft {
   const resource = input.resource ?? "/risk-report";
+  const policyScope = cawPolicyScope(input.network, input.tokenSymbol);
   return {
     name: "x402 risk report purchase",
     intent: `Buy one on-chain address risk report for ${input.address}.`,
@@ -55,9 +56,9 @@ Buy one x402-protected risk report for ${input.address}.
         rules: {
           effect: "allow",
           when: {
-            chain_in: [input.network],
-            token_in: [{ chain_id: input.network, token_id: input.tokenSymbol }],
-            destination_address_in: [{ chain_id: input.network, address: input.payTo }]
+            chain_in: [policyScope.chainId],
+            token_in: [{ chain_id: policyScope.chainId, token_id: policyScope.tokenId }],
+            destination_address_in: [{ chain_id: policyScope.chainId, address: input.payTo }]
           },
           deny_if: {
             amount_gt: input.maxPriceUsdc,
@@ -67,6 +68,23 @@ Buy one x402-protected risk report for ${input.address}.
       }
     ]
   };
+}
+
+function cawPolicyScope(network: string, tokenSymbol: string): { chainId: string; tokenId: string } {
+  if (tokenSymbol !== "USDC") {
+    throw new Error(`Unsupported CAW Pact token for x402 risk report: ${tokenSymbol}`);
+  }
+
+  switch (network) {
+    case "eip155:84532":
+      return { chainId: "TBASE_SETH", tokenId: "TBASE_SETH_USDC" };
+    case "eip155:11155111":
+      return { chainId: "SETH", tokenId: "SETH_USDC" };
+    case "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1":
+      return { chainId: "SOLDEV_SOL", tokenId: "SOLDEV_SOL_USDC" };
+    default:
+      throw new Error(`Unsupported CAW Pact network for x402 risk report: ${network}`);
+  }
 }
 
 export type PactSubmitResult = {

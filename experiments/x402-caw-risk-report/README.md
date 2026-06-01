@@ -4,6 +4,11 @@ Runnable MVP for buying one on-chain address risk report through an x402 paywall
 
 The learning goal is the commerce loop: quote, local policy check, scoped Pact approval, payment proof, paid retry, report validation, and audit evidence. This is not a marketplace, escrow system, reputation registry, real risk-data provider, or browser UI.
 
+## Live Test Notes
+
+- [2026-06-01 x402 + CAW Live Test 问题复盘](./docs/2026-06-01-live-test-issues.md)
+- [2026-06-01 x402 + CAW Live Test Evidence](./docs/2026-06-01-live-test-evidence.md)
+
 ## Boundaries
 
 - Provider Server: Hono API at `GET /risk-report?address=...`. It returns `402 Payment Required` for unpaid requests, verifies and settles x402 payment headers through the official seller middleware, then persists the delivered report hash.
@@ -25,7 +30,8 @@ Copy `.env.example` to `.env` locally if you use env loading in your shell. Do n
 Important values:
 
 - `PROVIDER_PAY_TO_ADDRESS`: provider receiving address.
-- `X402_NETWORK`, `X402_TOKEN_SYMBOL`, `X402_PRICE_USDC`: quoted payment requirement.
+- `X402_NETWORK`, `X402_TOKEN_SYMBOL`, `X402_PRICE_USDC`: quoted payment requirement. Supported Provider schemes are EVM `eip155:*` and Solana `solana:*`.
+- `X402_ASSET_ADDRESS`: optional token contract or mint address for explicit x402 quotes when the network has no default asset or the default asset is not supported by the buyer wallet.
 - `X402_FACILITATOR_URL`: x402 facilitator endpoint.
 - `CAW_API_BASE_URL`, `CAW_AGENT_CREDENTIAL`: real CAW CLI/API access. Keep secret.
 - `CAW_X402_PAYMENT_HEADER_COMMAND`: optional local adapter command that prints `{"paymentSignatureHeader":"..."}`. This is required for a full live CAW -> x402 paid retry until the CAW CLI exposes x402 payment headers directly.
@@ -60,6 +66,18 @@ curl -i 'http://localhost:4021/risk-report?address=not-an-address'
 
 Expected: HTTP `400`.
 
+Solana Devnet option:
+
+```bash
+PROVIDER_PAY_TO_ADDRESS=7kuW3nm9Yw7c3SAQEZpBsyVgNywpabJekeXjKuYt2Z4b \
+X402_NETWORK=solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1 \
+X402_TOKEN_SYMBOL=USDC \
+X402_PRICE_USDC=0.005 \
+npm run provider
+```
+
+The default x402 Solana Devnet asset is USDC mint `4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU`, which matches Cobo CAW token `SOLDEV_SOL_USDC`.
+
 ## Run Consumer
 
 Precheck only:
@@ -74,6 +92,10 @@ npm run consumer -- \
   --expected-token USDC \
   --expected-network eip155:84532
 ```
+
+For Solana Devnet, use the Solana payee and `--expected-network solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1`.
+
+The Consumer translates x402 network/token identifiers into CAW policy identifiers for the Pact. For Solana Devnet USDC that means x402 `solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1` + `USDC` becomes CAW `SOLDEV_SOL` + `SOLDEV_SOL_USDC`.
 
 Full flow:
 

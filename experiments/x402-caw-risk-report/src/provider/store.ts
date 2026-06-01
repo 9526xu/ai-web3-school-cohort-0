@@ -91,6 +91,14 @@ export type ProviderStore = {
     responseBody: string;
     now?: Date;
   }): ReportDeliveryRecord;
+  recordSettledDeliveryByFingerprint(input: {
+    requestFingerprint: string;
+    settlementResponse: unknown;
+    txHash?: string;
+    payer?: string;
+    responseBody: string;
+    now?: Date;
+  }): ReportDeliveryRecord;
   recordSettledPayment(input: {
     paymentId: string;
     requestFingerprint: string;
@@ -294,6 +302,66 @@ class SqliteProviderStore implements ProviderStore {
            where id = @orderId`
         )
         .run({ orderId: order.id, deliveredAt: now.toISOString() });
+    });
+
+    transaction();
+    return delivery;
+  }
+
+  recordSettledDeliveryByFingerprint(input: {
+    requestFingerprint: string;
+    settlementResponse: unknown;
+    txHash?: string;
+    payer?: string;
+    responseBody: string;
+    now?: Date;
+  }): ReportDeliveryRecord {
+    const now = input.now ?? new Date();
+    const order = this.getOrderByFingerprint(input.requestFingerprint);
+    if (!order) {
+      throw new Error("settled payment order is missing");
+    }
+
+    const delivery = createDeliveryRecord(
+      {
+        orderId: order.id,
+        paymentId: order.paymentId,
+        requestFingerprint: input.requestFingerprint,
+        responseBody: input.responseBody
+      },
+      now
+    );
+
+    const transaction = this.db.transaction(() => {
+      this.db
+        .prepare(
+          `update payment_records
+           set status = 'settled',
+               payer = coalesce(@payer, payer),
+               tx_hash = @txHash,
+               settlement_response = @settlementResponse,
+               updated_at = @updatedAt,
+               settled_at = @settledAt
+           where order_id = @orderId`
+        )
+        .run({
+          orderId: order.id,
+          payer: input.payer ?? null,
+          txHash: input.txHash ?? null,
+          settlementResponse: JSON.stringify(input.settlementResponse),
+          updatedAt: now.toISOString(),
+          settledAt: now.toISOString()
+        });
+      insertDelivery(this.db, delivery);
+      this.db
+        .prepare(
+          `update risk_report_orders
+           set status = 'delivered',
+               paid_at = coalesce(paid_at, @paidAt),
+               delivered_at = @deliveredAt
+           where id = @orderId`
+        )
+        .run({ orderId: order.id, paidAt: now.toISOString(), deliveredAt: now.toISOString() });
     });
 
     transaction();

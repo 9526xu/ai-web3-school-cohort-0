@@ -153,6 +153,42 @@ describe("provider unpaid risk report quote path", () => {
     expect(delivery).toMatchObject({ paymentId, requestFingerprint: fingerprint });
   });
 
+  it("settles and records delivery when the payment payload has no payment identifier", async () => {
+    const facilitator = fakeFacilitator(config, { verifies: true, settles: true });
+    const app = createProviderApp(config, store, { facilitatorClient: facilitator.client });
+    const address = "0x0000000000000000000000000000000000000001";
+    const unpaid = await app.request(`/risk-report?address=${address}`, {
+      headers: { accept: "application/json" }
+    });
+    const paymentRequired = decodePaymentRequired(unpaid.headers.get("payment-required"));
+
+    const response = await app.request(`/risk-report?address=${address}`, {
+      headers: {
+        accept: "application/json",
+        "payment-signature": encodePaymentPayload(paymentRequired)
+      }
+    });
+    const fingerprint = requestFingerprint({
+      method: "GET",
+      path: "/risk-report",
+      address,
+      payment: paymentRequirementFromConfig(config)
+    });
+    const order = store.getOrderByFingerprint(fingerprint);
+    const payment = store.getPaymentsForOrder(order?.id ?? "")[0];
+    const delivery = store.getDeliveryForOrder(order?.id ?? "");
+
+    expect(response.status).toBe(200);
+    expect(order).toMatchObject({ status: "delivered", requestFingerprint: fingerprint });
+    expect(payment).toMatchObject({
+      paymentId: null,
+      status: "settled",
+      payer: "0x00000000000000000000000000000000000000aa",
+      txHash: "0xtestsettlement"
+    });
+    expect(delivery).toMatchObject({ paymentId: null, requestFingerprint: fingerprint });
+  });
+
   it("returns a cached delivery for the same payment id and fingerprint without settling again", async () => {
     const facilitator = fakeFacilitator(config, { verifies: true, settles: true });
     const app = createProviderApp(config, store, { facilitatorClient: facilitator.client });
@@ -316,17 +352,19 @@ function decodePaymentResponse(header: string | null): SettleResponse {
   return JSON.parse(Buffer.from(header, "base64url").toString("utf8")) as SettleResponse;
 }
 
-function encodePaymentPayload(paymentRequired: PaymentRequired, paymentId: string): string {
+function encodePaymentPayload(paymentRequired: PaymentRequired, paymentId?: string): string {
   const paymentPayload: PaymentPayload = {
     x402Version: paymentRequired.x402Version,
     resource: paymentRequired.resource,
     accepted: paymentRequired.accepts[0],
     payload: { test: "signed-payment-payload" },
-    extensions: {
-      [PAYMENT_IDENTIFIER]: {
-        info: { required: false, id: paymentId }
-      }
-    }
+    extensions: paymentId
+      ? {
+          [PAYMENT_IDENTIFIER]: {
+            info: { required: false, id: paymentId }
+          }
+        }
+      : undefined
   };
   return Buffer.from(JSON.stringify(paymentPayload)).toString("base64url");
 }
