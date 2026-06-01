@@ -61,6 +61,34 @@ describe("precheckPaymentRequirement", () => {
     });
   });
 
+  it("matches EVM payees case-insensitively and Solana payees case-sensitively", () => {
+    expect(
+      precheckPaymentRequirement({
+        requirement: { ...baseRequirement, payTo: "0xDBAB90D3A468E25ED69F54D0850D492F3C6649BD" },
+        maxPriceUsdc: "0.005",
+        expectedPayTo: "0xdbab90d3a468e25ed69f54d0850d492f3c6649bd",
+        expectedNetwork: baseRequirement.network,
+        expectedTokenSymbol: baseRequirement.tokenSymbol,
+        now: new Date("2026-05-31T00:00:00.000Z")
+      })
+    ).toMatchObject({ status: "passed" });
+
+    expect(
+      precheckPaymentRequirement({
+        requirement: {
+          ...baseRequirement,
+          network: "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1",
+          payTo: "7kuW3nm9Yw7c3SAQEZpBsyVgNywpabJekeXjKuYt2Z4b"
+        },
+        maxPriceUsdc: "0.005",
+        expectedPayTo: "7kuW3nm9Yw7c3SAQEZpBsyVgNywpabJekeXjKuYt2Z4B",
+        expectedNetwork: "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1",
+        expectedTokenSymbol: baseRequirement.tokenSymbol,
+        now: new Date("2026-05-31T00:00:00.000Z")
+      })
+    ).toMatchObject({ status: "failed", reason: "payee mismatch" });
+  });
+
   it("fails before payment when token or network does not match policy", () => {
     expect(
       precheckPaymentRequirement({

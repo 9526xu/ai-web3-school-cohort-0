@@ -1,5 +1,5 @@
 import { loadConfig } from "../shared/config.js";
-import { runConsumerPrecheckTask } from "./task.js";
+import { runConsumerTask } from "./task.js";
 
 type CliArgs = {
   address: string;
@@ -9,23 +9,27 @@ type CliArgs = {
   expectedNetwork?: string;
   expectedTokenSymbol?: string;
   expectedResource: "/risk-report";
+  precheckOnly: boolean;
 };
 
 async function main(): Promise<void> {
   const config = loadConfig();
   const args = parseArgs(process.argv.slice(2));
-  const result = await runConsumerPrecheckTask({
-    address: args.address,
-    apiUrl: args.apiUrl,
-    maxPriceUsdc: args.maxPriceUsdc,
-    expectedPayTo: args.expectedPayTo ?? config.providerPayToAddress,
-    expectedNetwork: args.expectedNetwork ?? config.x402Network,
-    expectedTokenSymbol: args.expectedTokenSymbol ?? config.x402TokenSymbol,
-    expectedResource: args.expectedResource
-  });
+  const result = await runConsumerTask(
+    {
+      address: args.address,
+      apiUrl: args.apiUrl,
+      maxPriceUsdc: args.maxPriceUsdc,
+      expectedPayTo: args.expectedPayTo ?? config.providerPayToAddress,
+      expectedNetwork: args.expectedNetwork ?? config.x402Network,
+      expectedTokenSymbol: args.expectedTokenSymbol ?? config.x402TokenSymbol,
+      expectedResource: args.expectedResource
+    },
+    { config, precheckOnly: args.precheckOnly }
+  );
 
   console.log(JSON.stringify(result, null, 2));
-  if (result.precheck.status === "failed") {
+  if (result.precheck.status === "failed" || (result.status && result.status !== "succeeded")) {
     process.exitCode = 2;
   }
 }
@@ -42,7 +46,8 @@ function parseArgs(args: string[]): CliArgs {
     expectedPayTo: readOption(args, "--expected-payee"),
     expectedNetwork: readOption(args, "--expected-network"),
     expectedTokenSymbol: readOption(args, "--expected-token"),
-    expectedResource: "/risk-report"
+    expectedResource: "/risk-report",
+    precheckOnly: args.includes("--precheck-only")
   };
 }
 

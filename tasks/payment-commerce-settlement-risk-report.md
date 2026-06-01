@@ -81,10 +81,18 @@ ERC-8004 后续可以补充 agent 身份、发现、声誉和验证。它不是 
 
 已设计一个围绕链上地址风险报告 API 的 x402 Paywall + CAW Agent 自主支付 MVP flow。
 
+可运行 demo 在 [`experiments/x402-caw-risk-report`](../experiments/x402-caw-risk-report/README.md)。
+
+该 demo 产出的证据包括：
+
+- Provider SQLite 记录：订单、payment record、settlement 后的 delivery hash。
+- Consumer audit JSON：用户请求、Pact policy 摘要、x402 payment requirement、本地 precheck、CAW/payment 摘要、报告 hash、验收结果和失败原因。
+- 失败路径：地址格式拒绝、预算/收款方/token/network 不匹配拒付、CAW policy denial、重复 payment id 缓存与冲突处理。
+
 ## 证据
 
-- Repo/commit:
-- Demo:
+- Repo/commit: 本地 demo 实现见 `experiments/x402-caw-risk-report/`
+- Demo: 运行步骤见 `experiments/x402-caw-risk-report/README.md`
 - Submission link:
 
 ## 复盘

@@ -6,8 +6,9 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { loadConfig, type DemoConfig } from "../shared/config.js";
 import { requestFingerprint } from "../shared/fingerprint.js";
 import { paymentRequirementFromConfig } from "../shared/payment.js";
-import type { PaymentRequired } from "@x402/core/types";
+import type { PaymentPayload, PaymentRequired, SettleResponse } from "@x402/core/types";
 import type { FacilitatorClient } from "@x402/core/server";
+import { PAYMENT_IDENTIFIER } from "@x402/extensions/payment-identifier";
 import { createProviderApp } from "./routes.js";
 import { createSqliteProviderStore, type ProviderStore } from "./store.js";
 
@@ -38,7 +39,7 @@ describe("provider unpaid risk report quote path", () => {
   });
 
   it("rejects invalid EVM addresses before creating an order", async () => {
-    const app = createProviderApp(config, store, { facilitatorClient: fakeFacilitator(config) });
+    const app = createProviderApp(config, store, { facilitatorClient: fakeFacilitator(config).client });
 
     const response = await app.request("/risk-report?address=not-an-address", {
       headers: { accept: "application/json" }
@@ -49,7 +50,7 @@ describe("provider unpaid risk report quote path", () => {
   });
 
   it("quotes a valid unpaid request without delivering the report", async () => {
-    const app = createProviderApp(config, store, { facilitatorClient: fakeFacilitator(config) });
+    const app = createProviderApp(config, store, { facilitatorClient: fakeFacilitator(config).client });
     const address = "0x0000000000000000000000000000000000000001";
     const response = await app.request(`/risk-report?address=${address}`, {
       headers: { accept: "application/json" }
@@ -89,7 +90,7 @@ describe("provider unpaid risk report quote path", () => {
   });
 
   it("reuses the existing order and required payment record for the same unpaid request", async () => {
-    const app = createProviderApp(config, store, { facilitatorClient: fakeFacilitator(config) });
+    const app = createProviderApp(config, store, { facilitatorClient: fakeFacilitator(config).client });
     const address = "0x0000000000000000000000000000000000000001";
 
     await app.request(`/risk-report?address=${address}`, { headers: { accept: "application/json" } });
@@ -108,6 +109,233 @@ describe("provider unpaid risk report quote path", () => {
     expect(payments).toHaveLength(1);
     expect(payments[0].status).toBe("required");
   });
+
+  it("settles a paid request, persists the delivered report, and returns the payment response header", async () => {
+    const facilitator = fakeFacilitator(config, { verifies: true, settles: true });
+    const app = createProviderApp(config, store, { facilitatorClient: facilitator.client });
+    const address = "0x0000000000000000000000000000000000000001";
+    const unpaid = await app.request(`/risk-report?address=${address}`, {
+      headers: { accept: "application/json" }
+    });
+    const paymentRequired = decodePaymentRequired(unpaid.headers.get("payment-required"));
+    const paymentId = "pay_paid_request_0001";
+
+    const response = await app.request(`/risk-report?address=${address}`, {
+      headers: {
+        accept: "application/json",
+        "payment-signature": encodePaymentPayload(paymentRequired, paymentId)
+      }
+    });
+    const body = (await response.json()) as Record<string, { address?: string }>;
+    const paymentResponse = decodePaymentResponse(response.headers.get("payment-response"));
+    const fingerprint = requestFingerprint({
+      method: "GET",
+      path: "/risk-report",
+      address,
+      payment: paymentRequirementFromConfig(config)
+    });
+    const order = store.getOrderByPaymentId(paymentId);
+    const payment = store.getPaymentsForOrder(order?.id ?? "")[0];
+    const delivery = store.getDeliveryForOrder(order?.id ?? "");
+
+    expect(response.status).toBe(200);
+    expect(body.report.address).toBe(address);
+    expect(paymentResponse).toMatchObject({ success: true, transaction: "0xtestsettlement" });
+    expect(facilitator.verifyCalls).toBe(1);
+    expect(facilitator.settleCalls).toBe(1);
+    expect(order).toMatchObject({ status: "delivered", requestFingerprint: fingerprint });
+    expect(payment).toMatchObject({
+      paymentId,
+      status: "settled",
+      payer: "0x00000000000000000000000000000000000000aa",
+      txHash: "0xtestsettlement"
+    });
+    expect(delivery).toMatchObject({ paymentId, requestFingerprint: fingerprint });
+  });
+
+  it("settles and records delivery when the payment payload has no payment identifier", async () => {
+    const facilitator = fakeFacilitator(config, { verifies: true, settles: true });
+    const app = createProviderApp(config, store, { facilitatorClient: facilitator.client });
+    const address = "0x0000000000000000000000000000000000000001";
+    const unpaid = await app.request(`/risk-report?address=${address}`, {
+      headers: { accept: "application/json" }
+    });
+    const paymentRequired = decodePaymentRequired(unpaid.headers.get("payment-required"));
+
+    const response = await app.request(`/risk-report?address=${address}`, {
+      headers: {
+        accept: "application/json",
+        "payment-signature": encodePaymentPayload(paymentRequired)
+      }
+    });
+    const fingerprint = requestFingerprint({
+      method: "GET",
+      path: "/risk-report",
+      address,
+      payment: paymentRequirementFromConfig(config)
+    });
+    const order = store.getOrderByFingerprint(fingerprint);
+    const payment = store.getPaymentsForOrder(order?.id ?? "")[0];
+    const delivery = store.getDeliveryForOrder(order?.id ?? "");
+
+    expect(response.status).toBe(200);
+    expect(order).toMatchObject({ status: "delivered", requestFingerprint: fingerprint });
+    expect(payment).toMatchObject({
+      paymentId: null,
+      status: "settled",
+      payer: "0x00000000000000000000000000000000000000aa",
+      txHash: "0xtestsettlement"
+    });
+    expect(delivery).toMatchObject({ paymentId: null, requestFingerprint: fingerprint });
+  });
+
+  it("returns a cached delivery for the same payment id and fingerprint without settling again", async () => {
+    const facilitator = fakeFacilitator(config, { verifies: true, settles: true });
+    const app = createProviderApp(config, store, { facilitatorClient: facilitator.client });
+    const address = "0x0000000000000000000000000000000000000001";
+    const unpaid = await app.request(`/risk-report?address=${address}`, {
+      headers: { accept: "application/json" }
+    });
+    const paymentRequired = decodePaymentRequired(unpaid.headers.get("payment-required"));
+    const paymentId = "pay_cached_request_001";
+    const paymentSignature = encodePaymentPayload(paymentRequired, paymentId);
+
+    const first = await app.request(`/risk-report?address=${address}`, {
+      headers: { accept: "application/json", "payment-signature": paymentSignature }
+    });
+    const second = await app.request(`/risk-report?address=${address}`, {
+      headers: { accept: "application/json", "payment-signature": paymentSignature }
+    });
+    const firstBody = await first.json();
+    const secondBody = await second.json();
+
+    expect(second.status).toBe(200);
+    expect(second.headers.get("x-risk-report-cache")).toBe("hit");
+    expect(secondBody).toEqual(firstBody);
+    expect(facilitator.verifyCalls).toBe(1);
+    expect(facilitator.settleCalls).toBe(1);
+  });
+
+  it("continues delivery for a paid order that was not delivered without settling again", async () => {
+    const facilitator = fakeFacilitator(config, { verifies: true, settles: true });
+    const app = createProviderApp(config, store, { facilitatorClient: facilitator.client });
+    const address = "0x0000000000000000000000000000000000000001";
+    const paymentId = "pay_paid_undelivered";
+    const fingerprint = requestFingerprint({
+      method: "GET",
+      path: "/risk-report",
+      address,
+      payment: paymentRequirementFromConfig(config)
+    });
+    store.ensureRequiredPayment({
+      address,
+      requestFingerprint: fingerprint,
+      payment: paymentRequirementFromConfig(config),
+      paymentRequiredPayload: paymentRequirementFromConfig(config)
+    });
+    store.bindPaymentId({
+      paymentId,
+      requestFingerprint: fingerprint,
+      paymentSignaturePayload: { test: true }
+    });
+    store.recordSettledPayment({
+      paymentId,
+      requestFingerprint: fingerprint,
+      settlementResponse: { success: true, transaction: "0xalreadysettled", network: config.x402Network },
+      txHash: "0xalreadysettled"
+    });
+
+    const unpaid = await app.request(`/risk-report?address=${address}`, {
+      headers: { accept: "application/json" }
+    });
+    const paymentRequired = decodePaymentRequired(unpaid.headers.get("payment-required"));
+    const response = await app.request(`/risk-report?address=${address}`, {
+      headers: {
+        accept: "application/json",
+        "payment-signature": encodePaymentPayload(paymentRequired, paymentId)
+      }
+    });
+    const body = (await response.json()) as Record<string, { address?: string }>;
+    const order = store.getOrderByPaymentId(paymentId);
+    const delivery = store.getDeliveryForOrder(order?.id ?? "");
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("x-risk-report-recovery")).toBe("paid-order-delivered");
+    expect(body.report.address).toBe(address);
+    expect(delivery?.paymentId).toBe(paymentId);
+    expect(store.getOrderByPaymentId(paymentId)?.status).toBe("delivered");
+    expect(facilitator.verifyCalls).toBe(0);
+    expect(facilitator.settleCalls).toBe(0);
+  });
+
+  it("rejects the same payment id with a different request fingerprint", async () => {
+    const facilitator = fakeFacilitator(config, { verifies: true, settles: true });
+    const app = createProviderApp(config, store, { facilitatorClient: facilitator.client });
+    const firstAddress = "0x0000000000000000000000000000000000000001";
+    const secondAddress = "0x0000000000000000000000000000000000000002";
+    const unpaid = await app.request(`/risk-report?address=${firstAddress}`, {
+      headers: { accept: "application/json" }
+    });
+    const paymentRequired = decodePaymentRequired(unpaid.headers.get("payment-required"));
+    const paymentId = "pay_conflict_request";
+
+    await app.request(`/risk-report?address=${firstAddress}`, {
+      headers: { accept: "application/json", "payment-signature": encodePaymentPayload(paymentRequired, paymentId) }
+    });
+    const conflict = await app.request(`/risk-report?address=${secondAddress}`, {
+      headers: { accept: "application/json", "payment-signature": encodePaymentPayload(paymentRequired, paymentId) }
+    });
+    const body = await conflict.json();
+
+    expect(conflict.status).toBe(409);
+    expect(body).toMatchObject({ error: "payment_id_conflict" });
+    expect(store.getOrderByPaymentId(paymentId)?.status).toBe("conflict");
+    expect(facilitator.settleCalls).toBe(1);
+  });
+
+  it("rejects an expired payment id instead of silently reusing the stale order", async () => {
+    const facilitator = fakeFacilitator(config, { verifies: true, settles: true });
+    const app = createProviderApp(config, store, { facilitatorClient: facilitator.client });
+    const address = "0x0000000000000000000000000000000000000001";
+    const paymentId = "pay_expired_request";
+    const fingerprint = requestFingerprint({
+      method: "GET",
+      path: "/risk-report",
+      address,
+      payment: paymentRequirementFromConfig(config)
+    });
+    store.ensureRequiredPayment({
+      address,
+      requestFingerprint: fingerprint,
+      payment: paymentRequirementFromConfig(config),
+      paymentRequiredPayload: paymentRequirementFromConfig(config),
+      now: new Date("2026-05-31T00:00:00.000Z")
+    });
+    store.bindPaymentId({
+      paymentId,
+      requestFingerprint: fingerprint,
+      paymentSignaturePayload: { test: true },
+      now: new Date("2026-05-31T00:00:01.000Z")
+    });
+
+    const unpaid = await app.request(`/risk-report?address=${address}`, {
+      headers: { accept: "application/json" }
+    });
+    const paymentRequired = decodePaymentRequired(unpaid.headers.get("payment-required"));
+    const response = await app.request(`/risk-report?address=${address}`, {
+      headers: {
+        accept: "application/json",
+        "payment-signature": encodePaymentPayload(paymentRequired, paymentId)
+      }
+    });
+    const body = await response.json();
+
+    expect(response.status).toBe(410);
+    expect(body).toMatchObject({ error: "order_expired" });
+    expect(store.getOrderByPaymentId(paymentId)?.status).toBe("expired");
+    expect(facilitator.verifyCalls).toBe(0);
+    expect(facilitator.settleCalls).toBe(0);
+  });
 });
 
 function decodePaymentRequired(header: string | null): PaymentRequired {
@@ -117,26 +345,71 @@ function decodePaymentRequired(header: string | null): PaymentRequired {
   return JSON.parse(Buffer.from(header, "base64url").toString("utf8")) as PaymentRequired;
 }
 
-function fakeFacilitator(config: DemoConfig): FacilitatorClient {
-  return {
-    async getSupported() {
-      return {
-        kinds: [{ x402Version: 2, scheme: "exact", network: config.x402Network as `${string}:${string}` }],
-        extensions: [],
-        signers: {}
-      };
-    },
-    async verify() {
-      return { isValid: false, invalidReason: "test", invalidMessage: "test facilitator does not verify" };
-    },
-    async settle() {
-      return {
-        success: false,
-        errorReason: "test",
-        errorMessage: "test facilitator does not settle",
-        transaction: "",
-        network: config.x402Network as `${string}:${string}`
-      };
-    }
+function decodePaymentResponse(header: string | null): SettleResponse {
+  if (!header) {
+    throw new Error("missing payment-response header");
+  }
+  return JSON.parse(Buffer.from(header, "base64url").toString("utf8")) as SettleResponse;
+}
+
+function encodePaymentPayload(paymentRequired: PaymentRequired, paymentId?: string): string {
+  const paymentPayload: PaymentPayload = {
+    x402Version: paymentRequired.x402Version,
+    resource: paymentRequired.resource,
+    accepted: paymentRequired.accepts[0],
+    payload: { test: "signed-payment-payload" },
+    extensions: paymentId
+      ? {
+          [PAYMENT_IDENTIFIER]: {
+            info: { required: false, id: paymentId }
+          }
+        }
+      : undefined
   };
+  return Buffer.from(JSON.stringify(paymentPayload)).toString("base64url");
+}
+
+function fakeFacilitator(
+  config: DemoConfig,
+  behavior: { verifies?: boolean; settles?: boolean } = {}
+): { client: FacilitatorClient; verifyCalls: number; settleCalls: number } {
+  const facilitator = {
+    verifyCalls: 0,
+    settleCalls: 0,
+    client: {
+      async getSupported() {
+        return {
+          kinds: [{ x402Version: 2, scheme: "exact", network: config.x402Network as `${string}:${string}` }],
+          extensions: [],
+          signers: {}
+        };
+      },
+      async verify() {
+        facilitator.verifyCalls += 1;
+        if (behavior.verifies) {
+          return { isValid: true, payer: "0x00000000000000000000000000000000000000aa" };
+        }
+        return { isValid: false, invalidReason: "test", invalidMessage: "test facilitator does not verify" };
+      },
+      async settle() {
+        facilitator.settleCalls += 1;
+        if (behavior.settles) {
+          return {
+            success: true,
+            transaction: "0xtestsettlement",
+            network: config.x402Network as `${string}:${string}`,
+            payer: "0x00000000000000000000000000000000000000aa"
+          };
+        }
+        return {
+          success: false,
+          errorReason: "test",
+          errorMessage: "test facilitator does not settle",
+          transaction: "",
+          network: config.x402Network as `${string}:${string}`
+        };
+      }
+    } satisfies FacilitatorClient
+  };
+  return facilitator;
 }
